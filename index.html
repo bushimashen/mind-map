@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Markdown 思维导图 · 大纲转可交互导图，导出 PNG/SVG</title>
+<meta name="description" content="粘贴 Markdown 笔记（标题 + 列表）一键生成可交互思维导图：点节点折叠展开、滚轮缩放、拖拽平移，导出高清 PNG 与矢量 SVG。全部本地解析，不上传。" />
+<meta property="og:title" content="Markdown 思维导图" />
+<meta property="og:description" content="Markdown 大纲一键生成可交互导图，导出 PNG/SVG，纯本地解析。" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237c3aed' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='10' width='6' height='4' rx='1.5'/%3E%3Crect x='15' y='3' width='6' height='4' rx='1.5'/%3E%3Crect x='15' y='17' width='6' height='4' rx='1.5'/%3E%3Cpath d='M9 12h3M12 12V5h3M12 12v7h3'/%3E%3C/svg%3E" />
+<style>
+[hidden] { display: none !important; }
+
+:root {
+  --bg: #f5f6fa; --surface: #fff; --surface2: #f2f4f9; --surface3: #e8ecf5;
+  --text: #1b2130; --muted: #6b7385; --border: #e2e6ef;
+  --primary: #7c3aed; --primary2: #2563eb; --danger: #e11d48;
+  --shadow: 0 8px 28px rgba(23, 32, 64, .08);
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1017; --surface: #151a24; --surface2: #1b2130; --surface3: #232b3a;
+    --text: #e8ecf4; --muted: #8b93a7; --border: #26303b;
+    --shadow: 0 10px 34px rgba(0, 0, 0, .45);
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg); color: var(--text); min-height: 100vh;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 13.5px; line-height: 1.6; -webkit-font-smoothing: antialiased;
+}
+.page { max-width: 1500px; margin: 0 auto; padding: 22px 20px 40px; }
+
+.head h1 { margin: 0 0 6px; font-size: 25px; }
+.head p { margin: 0 0 18px; color: var(--muted); max-width: 780px; }
+.head b { color: var(--text); }
+
+.panel {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+  box-shadow: var(--shadow); overflow: hidden; margin-bottom: 16px;
+}
+.panel-head {
+  display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+  border-bottom: 1px solid var(--border); flex-wrap: wrap;
+}
+.panel-head h2 { margin: 0; font-size: 14px; font-weight: 700; }
+.spacer { flex: 1; }
+.chip {
+  border: 1px solid var(--border); background: var(--surface2); color: var(--text);
+  border-radius: 999px; padding: 6px 14px; font-size: 12.5px; font-weight: 600;
+  cursor: pointer; font-family: inherit;
+}
+.chip:hover { background: var(--surface3); }
+.chip.primary { background: linear-gradient(135deg, var(--primary), var(--primary2)); border: none; color: #fff; }
+.chip.primary:hover { filter: brightness(1.07); }
+.chip:disabled { opacity: .45; cursor: default; }
+
+textarea {
+  width: 100%; min-height: 190px; border: none; outline: none; resize: vertical;
+  background: var(--surface); color: var(--text); padding: 14px 16px;
+  font-family: var(--mono); font-size: 13px; line-height: 1.7; tab-size: 2;
+}
+.stats { margin: 0; padding: 0 16px 12px; color: var(--muted); font-size: 12.5px; }
+
+/* ---------- 画布 ---------- */
+.stage { position: relative; height: 560px; overflow: hidden; background: var(--surface); cursor: grab; }
+.stage.dragging { cursor: grabbing; }
+.stage svg { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.mm-link { fill: none; stroke-width: 1.6; opacity: .55; }
+.mm-node { cursor: pointer; }
+.mm-node text { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+.mm-label { font-size: 12.5px; font-weight: 500; pointer-events: none; }
+.mm-badge { font-size: 11px; font-weight: 700; fill: var(--primary); }
+
+.empty {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  color: var(--muted); font-size: 13px; text-align: center; pointer-events: none; padding: 20px;
+}
+
+.zoombar {
+  position: absolute; right: 12px; bottom: 12px; display: flex; align-items: center; gap: 6px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid var(--border); border-radius: 10px; padding: 5px 7px;
+}
+.zoombar button {
+  border: none; background: transparent; color: var(--text); cursor: pointer;
+  font-size: 14px; width: 24px; height: 22px; border-radius: 6px; font-family: inherit;
+}
+.zoombar button:hover { background: var(--surface2); }
+.zoombar .k { color: var(--muted); font-size: 12px; min-width: 40px; text-align: center; }
+.tip {
+  position: absolute; left: 12px; bottom: 12px; color: var(--muted); font-size: 12px;
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; pointer-events: none;
+}
+
+.foot {
+  margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--border);
+  display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;
+  color: var(--muted); font-size: 12.5px;
+}
+.foot a { color: var(--primary); text-decoration: none; }
+.foot a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="head">
+    <h1>Markdown 思维导图</h1>
+    <p>
+      粘贴 Markdown 笔记（<b>标题 + 列表</b>），一键生成<b>可交互思维导图</b>：点节点折叠展开、滚轮缩放、拖拽平移，
+      导出高清 PNG 与矢量 SVG。全部本地解析，不上传。
+    </p>
+  </header>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Markdown 大纲</h2>
+      <div class="spacer"></div>
+      <button class="chip" id="sampleBtn">填入示例</button>
+      <button class="chip" id="openBtn">打开 .md 文件</button>
+      <button class="chip primary" id="genBtn">生成导图</button>
+    </div>
+    <textarea id="raw" spellcheck="false" placeholder="# 主题&#10;## 分支一&#10;- 要点 1&#10;  - 细节&#10;## 分支二&#10;- 要点"></textarea>
+    <p class="stats" id="stats" hidden></p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>思维导图</h2>
+      <div class="spacer"></div>
+      <button class="chip" id="fitBtn">适应视图</button>
+      <button class="chip" id="collapseBtn">全部收起</button>
+      <button class="chip" id="expandBtn">全部展开</button>
+      <button class="chip primary" id="pngBtn">下载 PNG</button>
+      <button class="chip" id="svgBtn">下载 SVG</button>
+    </div>
+    <div class="stage" id="stage">
+      <svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div class="empty" id="empty">左侧写入大纲后点「生成导图」</div>
+      <div class="tip">点击节点折叠 / 展开 · 滚轮缩放 · 拖拽平移</div>
+      <div class="zoombar">
+        <button id="zOut" title="缩小">−</button>
+        <span class="k" id="zoomLabel">100%</span>
+        <button id="zIn" title="放大">＋</button>
+      </div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <span>单文件 · 零依赖 · 本地解析</span>
+    <span>
+      <a href="https://github.com/bushimashen/mind-map" target="_blank" rel="noopener">GitHub</a>
+      · <a href="https://gitee.com/codegoder/mind-map" target="_blank" rel="noopener">Gitee</a>
+    </span>
+  </footer>
+</div>
+
+<input type="file" id="file" accept=".md,.markdown,.txt,text/plain" hidden />
+
+<script>
+const $ = (id) => document.getElementById(id)
+
+const SAMPLE = `# 周末计划
+## 学习
+- 补一篇技术笔记
+  - 画两张示意图
+- 刷算法题 ×5
+## 家务
+- 大扫除
+  - 客厅
+  - 厨房
+- 洗衣服
+## 娱乐
+- 看电影《星际穿越》
+- 健身 1 小时
+  - 跑步 30 分钟
+  - 力量训练`
+
+/* ================= 配色（写死具体色，导出时不需要烘焙 CSS 变量） ================= */
+const DARK = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+const PALETTE = DARK
+  ? { surface: '#151a24', text: '#e8ecf4', muted: '#8b93a7', border: '#26303b' }
+  : { surface: '#ffffff', text: '#1b2130', muted: '#6b7385', border: '#e2e6ef' }
+
+/* 按深度取色：0 根节点实心蓝，之后依次紫 / 青 / 绿 / 橙 / 粉 / 灰 */
+const LEVELS = [
+  { solid: true, bg: '#2563eb', stroke: '#2563eb', text: '#ffffff' },
+  { bg: '#f3ecff', stroke: '#7c3aed', text: '#4c1d95' },
+  { bg: '#e6f7fb', stroke: '#0891b2', text: '#0e4f63' },
+  { bg: '#e9f8ef', stroke: '#16a34a', text: '#14532d' },
+  { bg: '#fdf1e3', stroke: '#d97706', text: '#7c3f06' },
+  { bg: '#fdeaf3', stroke: '#db2777', text: '#85144a' },
+  { bg: '#eef1f6', stroke: '#64748b', text: '#334155' }
+]
+const DARK_LEVELS = [
+  { solid: true, bg: '#2563eb', stroke: '#2563eb', text: '#ffffff' },
+  { bg: '#2a2140', stroke: '#a78bfa', text: '#ddd6fe' },
+  { bg: '#12303a', stroke: '#22d3ee', text: '#a5f3fc' },
+  { bg: '#12301f', stroke: '#4ade80', text: '#bbf7d0' },
+  { bg: '#33240f', stroke: '#fbbf24', text: '#fde68a' },
+  { bg: '#331a28', stroke: '#f472b6', text: '#fbcfe8' },
+  { bg: '#20242e', stroke: '#94a3b8', text: '#cbd5e1' }
+]
+const STYLE = DARK ? DARK_LEVELS : LEVELS
+const styleOf = (depth) => STYLE[Math.min(depth, STYLE.length - 1)]
+
+/* ================= Markdown → 树 ================= */
+/**
+ * 轻量解析（不做完整 Markdown）：
+ * - `#`~`######` 标题 → 层级就是标题级别
+ * - `-` / `*` / `+` / `1.` 列表项 → 挂到最近标题下，嵌套按缩进
+ * - 其它行（段落、引用、代码块）忽略
+ */
+function parseMarkdown(md) {
+  const root = { label: '📄 大纲', depth: 0, children: [] }
+  const headingStack = [root]   // headingStack[i] = 最近的 i 级标题
+  let listStack = []            // [{ indent, node }]
+  let count = 0
+
+  for (const rawLine of String(md).split(/\r?\n/)) {
+    const line = rawLine.replace(/\t/g, '  ')
+    if (!line.trim()) { listStack = []; continue }
+
+    const h = line.match(/^(#{1,6})\s+(.*\S)/)
+    if (h) {
+      const level = h[1].length
+      const node = { label: h[2].trim(), depth: level, children: [] }
+      headingStack.length = level        // 丢弃比当前更深的标题
+      const parent = headingStack[level - 1] || root
+      parent.children.push(node)
+      headingStack[level] = node
+      listStack = []
+      count++
+      continue
+    }
+
+    const li = line.match(/^(\s*)(?:[-*+]|\d+[.)])\s+(.*\S)/)
+    if (li) {
+      const indent = li[1].length
+      const node = { label: li[2].trim(), depth: 0, children: [] }
+      while (listStack.length && listStack[listStack.length - 1].indent >= indent) listStack.pop()
+      const parent = listStack.length
+        ? listStack[listStack.length - 1].node
+        : (headingStack.filter(Boolean).pop() || root)
+      parent.children.push(node)
+      listStack.push({ indent, node })
+      count++
+      continue
+    }
+  }
+
+  // 补出结构深度（用于取色），第一层真正的内容挂在 root 下算 1
+  ;(function walk(n, d) {
+    n.depth = d
+    n.children.forEach((c) => walk(c, d + 1))
+  })(root, 0)
+
+  return { root, count }
+}
+
+/* ================= 布局：横向 tidy 树 ================= */
+const GAP_X = 92
+const ROW = 46
+
+function measureWidth(label) {
+  // 估算：CJK 按 14px、ASCII 按 7.6px，与站点那版一致
+  let w = 0
+  for (const ch of String(label)) w += ch.charCodeAt(0) > 255 ? 14 : 7.6
+  return Math.max(28, Math.min(w, 300))
+}
+
+let tree = null
+let collapsed = new Set()
+let laidNodes = []
+let links = []
+let canvasSize = { w: 400, h: 300 }
+let view = { x: 40, y: 40, k: 1 }
+let uid = 0
+
+function countDesc(node) {
+  let c = 0
+  for (const k of node.children || []) c += 1 + countDesc(k)
+  return c
+}
+
+function layoutTree() {
+  laidNodes = []
+  links = []
+  if (!tree) { canvasSize = { w: 400, h: 300 }; return }
+  uid = 0
+  let cursorY = 0
+
+  function assignId(node) {
+    if (!node.__id) node.__id = ++uid
+    return node.__id
+  }
+  ;(function prep(n) { assignId(n); (n.children || []).forEach(prep) })(tree)
+
+  function place(node) {
+    const id = node.__id
+    const label = String(node.label ?? '')
+    const kids = collapsed.has(id) ? [] : (node.children || [])
+    const n = {
+      id, label, depth: node.depth, w: measureWidth(label),
+      collapsedCount: collapsed.has(id) ? countDesc(node) : 0
+    }
+    if (!kids.length) {
+      n.y = cursorY + ROW / 2
+      n.x = node.depth * GAP_X + n.w / 2
+      cursorY += ROW
+      laidNodes.push(n)
+      return n
+    }
+    const kidNs = kids.map(place)
+    n.y = (kidNs[0].y + kidNs[kidNs.length - 1].y) / 2
+    n.x = node.depth * GAP_X + n.w / 2
+    n.kids = kidNs
+    laidNodes.push(n)
+    return n
+  }
+  place(tree)
+
+  // 归一化：x 从 0 起，y 顶端留白
+  const minX = Math.min(...laidNodes.map((n) => n.x - n.w / 2)) - 26
+  laidNodes.forEach((n) => { n.x -= minX })
+  const maxR = Math.max(...laidNodes.map((n) => n.x + n.w / 2)) + 26
+  const minY = Math.min(...laidNodes.map((n) => n.y - 22)) - 20
+  const maxY = Math.max(...laidNodes.map((n) => n.y + 22)) + 20
+  laidNodes.forEach((n) => { n.y -= minY })
+  canvasSize = { w: Math.max(320, Math.ceil(maxR)), h: Math.max(240, Math.ceil(maxY - minY)) }
+
+  // 连线：父右边缘 → 子左边缘，中点控制的三次贝塞尔
+  const byId = new Map(laidNodes.map((n) => [n.id, n]))
+  ;(function walk(node) {
+    const p = byId.get(node.__id)
+    for (const k of node.children || []) {
+      const c = byId.get(k.__id)
+      if (!p || !c) continue
+      const x1 = p.x + p.w / 2 + 6
+      const x2 = c.x - c.w / 2 - 6
+      const mx = (x1 + x2) / 2
+      links.push({
+        d: `M${x1.toFixed(1)},${p.y.toFixed(1)} C${mx.toFixed(1)},${p.y.toFixed(1)} ${mx.toFixed(1)},${c.y.toFixed(1)} ${x2.toFixed(1)},${c.y.toFixed(1)}`,
+        color: styleOf(c.depth).stroke
+      })
+      walk(k)
+    }
+  })(tree)
+}
+
+/* ================= 渲染 ================= */
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+}
+
+function render() {
+  layoutTree()
+  const svg = $('svg')
+  svg.setAttribute('width', canvasSize.w)
+  svg.setAttribute('height', canvasSize.h)
+  svg.setAttribute('viewBox', `0 0 ${canvasSize.w} ${canvasSize.h}`)
+  svg.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.k})`
+
+  const parts = []
+  for (const l of links) {
+    parts.push(`<path class="mm-link" d="${l.d}" stroke="${l.color}" />`)
+  }
+  for (const n of laidNodes) {
+    const st = styleOf(n.depth)
+    const x = n.x - n.w / 2 - 6
+    parts.push(`<g class="mm-node" data-id="${n.id}" transform="translate(${n.x.toFixed(1)},${n.y.toFixed(1)})">
+      <rect x="${(-n.w / 2 - 6).toFixed(1)}" y="-15" width="${(n.w + 12).toFixed(1)}" height="30" rx="7"
+        fill="${st.bg}" stroke="${st.stroke}" stroke-width="1.4" />
+      <text class="mm-label" x="0" y="1" text-anchor="middle" dominant-baseline="middle" fill="${st.text}">${esc(n.label)}</text>
+      ${n.collapsedCount ? `<text class="mm-badge" x="${(n.w / 2 + 13).toFixed(1)}" y="1" text-anchor="middle" dominant-baseline="middle">+${n.collapsedCount}</text>` : ''}
+    </g>`)
+  }
+  svg.innerHTML = parts.join('')
+  $('empty').hidden = !!tree
+  $('zoomLabel').textContent = Math.round(view.k * 100) + '%'
+
+  // 节点点击 = 折叠/展开（移动 <4px 才算点击，避免拖拽误触）
+  svg.querySelectorAll('.mm-node').forEach((g) => {
+    g.addEventListener('pointerdown', (e) => {
+      e.stopPropagation()
+      const sx = e.clientX, sy = e.clientY
+      const up = (ev) => {
+        window.removeEventListener('pointerup', up)
+        if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 4) toggle(Number(g.dataset.id))
+      }
+      window.addEventListener('pointerup', up)
+    })
+  })
+}
+
+function findNode(node, id) {
+  if (!node) return null
+  if (node.__id === id) return node
+  for (const k of node.children || []) {
+    const r = findNode(k, id)
+    if (r) return r
+  }
+  return null
+}
+
+function toggle(id) {
+  const node = findNode(tree, id)
+  if (!node || !node.children || !node.children.length) return
+  if (collapsed.has(id)) collapsed.delete(id)
+  else collapsed.add(id)
+  render()
+}
+
+/* ================= 视图 ================= */
+const stage = $('stage')
+
+function fit() {
+  if (!tree) return
+  const r = stage.getBoundingClientRect()
+  const k = Math.min((r.width - 24) / canvasSize.w, (r.height - 24) / canvasSize.h, 1.2)
+  view = { k, x: (r.width - canvasSize.w * k) / 2, y: (r.height - canvasSize.h * k) / 2 }
+  render()
+}
+
+function zoomAt(cx, cy, delta) {
+  const k = Math.min(2.5, Math.max(0.08, +(view.k + delta).toFixed(3)))
+  const px = (cx - view.x) / view.k
+  const py = (cy - view.y) / view.k
+  view = { k, x: cx - px * k, y: cy - py * k }
+  render()
+}
+
+stage.addEventListener('wheel', (e) => {
+  e.preventDefault()
+  const r = stage.getBoundingClientRect()
+  zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 0.12 : -0.12)
+}, { passive: false })
+
+let pan = null
+stage.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return
+  stage.classList.add('dragging')
+  pan = { sx: e.clientX, sy: e.clientY, ox: view.x, oy: view.y }
+})
+window.addEventListener('pointermove', (e) => {
+  if (!pan) return
+  view.x = pan.ox + (e.clientX - pan.sx)
+  view.y = pan.oy + (e.clientY - pan.sy)
+  $('svg').style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.k})`
+})
+window.addEventListener('pointerup', () => {
+  pan = null
+  stage.classList.remove('dragging')
+})
+
+$('zIn').addEventListener('click', () => {
+  const r = stage.getBoundingClientRect()
+  zoomAt(r.width / 2, r.height / 2, 0.15)
+})
+$('zOut').addEventListener('click', () => {
+  const r = stage.getBoundingClientRect()
+  zoomAt(r.width / 2, r.height / 2, -0.15)
+})
+$('fitBtn').addEventListener('click', fit)
+
+$('collapseBtn').addEventListener('click', () => {
+  if (!tree) return
+  collapsed = new Set()
+  ;(function walk(n) {
+    if (n.children && n.children.length && n !== tree) collapsed.add(n.__id)
+    ;(n.children || []).forEach(walk)
+  })(tree)
+  render()
+})
+$('expandBtn').addEventListener('click', () => {
+  collapsed = new Set()
+  render()
+})
+
+/* ================= 生成 ================= */
+function generate() {
+  const md = $('raw').value
+  if (!md.trim()) { tree = null; render(); $('stats').hidden = true; return }
+  const r = parseMarkdown(md)
+  tree = r.root
+  collapsed = new Set()
+  $('stats').hidden = false
+  $('stats').textContent = `${r.count} 个节点 · ${md.length.toLocaleString()} 字符`
+  render()
+  fit()
+}
+
+$('genBtn').addEventListener('click', generate)
+$('sampleBtn').addEventListener('click', () => { $('raw').value = SAMPLE; generate() })
+$('openBtn').addEventListener('click', () => $('file').click())
+$('file').addEventListener('change', (e) => {
+  const f = e.target.files && e.target.files[0]
+  e.target.value = ''
+  if (!f) return
+  const fr = new FileReader()
+  fr.onload = () => { $('raw').value = fr.result; generate() }
+  fr.readAsText(f)
+})
+
+/* ================= 导出 ================= */
+function download(blob, name) {
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = name
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000)
+}
+
+/** 生成一份「自带底色 + 具体颜色」的干净 SVG（节点不带 data-id，去掉交互属性） */
+function buildSvgString() {
+  const pad = 24
+  const w = canvasSize.w + pad * 2
+  const h = canvasSize.h + pad * 2
+  const parts = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`,
+    `<rect width="${w}" height="${h}" fill="${PALETTE.surface}"/>`,
+    `<g transform="translate(${pad},${pad})">`
+  ]
+  for (const l of links) parts.push(`<path d="${l.d}" fill="none" stroke="${l.color}" stroke-width="1.6" opacity="0.55"/>`)
+  for (const n of laidNodes) {
+    const st = styleOf(n.depth)
+    parts.push(`<g transform="translate(${n.x.toFixed(1)},${n.y.toFixed(1)})">
+      <rect x="${(-n.w / 2 - 6).toFixed(1)}" y="-15" width="${(n.w + 12).toFixed(1)}" height="30" rx="7" fill="${st.bg}" stroke="${st.stroke}" stroke-width="1.4"/>
+      <text x="0" y="1" text-anchor="middle" dominant-baseline="middle" fill="${st.text}"
+        font-family="-apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="12.5" font-weight="500">${esc(n.label)}</text>
+      ${n.collapsedCount ? `<text x="${(n.w / 2 + 13).toFixed(1)}" y="1" text-anchor="middle" dominant-baseline="middle"
+        fill="${styleOf(n.depth).stroke}" font-size="11" font-weight="700">+${n.collapsedCount}</text>` : ''}
+    </g>`)
+  }
+  parts.push('</g></svg>')
+  return parts.join('')
+}
+
+$('svgBtn').addEventListener('click', () => {
+  if (!tree) return
+  download(new Blob([buildSvgString()], { type: 'image/svg+xml' }), 'mindmap.svg')
+})
+
+$('pngBtn').addEventListener('click', () => {
+  if (!tree) return
+  const scale = 2
+  const str = buildSvgString()
+  const img = new Image()
+  img.onload = () => {
+    const c = document.createElement('canvas')
+    c.width = (canvasSize.w + 48) * scale
+    c.height = (canvasSize.h + 48) * scale
+    const g = c.getContext('2d')
+    g.drawImage(img, 0, 0, c.width, c.height)
+    c.toBlob((b) => b && download(b, 'mindmap.png'), 'image/png')
+  }
+  img.onerror = () => alert('生成 PNG 失败，可改用「下载 SVG」')
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(str)
+})
+
+/* ================= 启动 ================= */
+window.addEventListener('resize', () => { if (tree) render() })
+$('raw').value = SAMPLE
+generate()
+</script>
+</body>
+</html>
